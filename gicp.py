@@ -110,28 +110,66 @@ def compute_ate_rmse(pred_poses, gt_poses):
     return np.sqrt(np.mean(np.square(errors)))
 
 
-def run_gicp_pipeline(bin_dir, gt_pose_path, frame_gap=5):
+def compute_fitness(source_pcd, target_pcd, T, threshold=1.5):
+    src = deepcopy(source_pcd)
+    src.transform(T)
+    src_points = np.asarray(src.points)
+    tgt_points = np.asarray(target_pcd.points)
+    if len(src_points) == 0 or len(tgt_points) == 0:
+        return 0.0, float("inf")
+
+    tree = o3d.geometry.KDTreeFlann(target_pcd)
+    inliers = 0
+    squared_errors = []
+
+    for p in src_points:
+        [_, idx, dist] = tree.search_knn_vector_3d(p, 1)
+        d = np.linalg.norm(p - tgt_points[idx[0]])
+        if d < threshold:
+            inliers += 1
+            squared_errors.append(d**2)
+
+    fitness = inliers / len(src_points)
+    rmse = np.sqrt(np.mean(squared_errors)) if squared_errors else 0.0
+    return fitness, rmse
+
+
+def run_gicp_pipeline(bin_dir, gt_pose_path, frame_gap=5, fitness_thresh=0.3):
     bin_files = sorted([f for f in os.listdir(bin_dir) if f.endswith(".bin")])
     gt_poses = load_poses_kitti(gt_pose_path)
     pred_poses = [np.eye(4)]
 
     frame_ids = list(range(0, min(len(bin_files), len(gt_poses)), frame_gap))
-    target = load_bin_as_pcd(os.path.join(bin_dir, bin_files[frame_ids[0]]))
 
     for i in range(1, len(frame_ids)):
         src_id = frame_ids[i]
         tgt_id = frame_ids[i - 1]
-
         print(f"[INFO] Aligning frame {tgt_id} → {src_id}")
+
         source = load_bin_as_pcd(os.path.join(bin_dir, bin_files[src_id]))
         target = load_bin_as_pcd(os.path.join(bin_dir, bin_files[tgt_id]))
 
         T_init = np.linalg.inv(gt_poses[tgt_id]) @ gt_poses[src_id]
-        T_icp = gicp(source, target, T_init[:3, :3], T_init[:3, 3])
-        T_i = pred_poses[-1] @ T_icp
-        pred_poses.append(T_i)
+
+        try:
+            T_icp = gicp(source, target, T_init[:3, :3], T_init[:3, 3])
+        except np.linalg.LinAlgError:
+            print(f"[WARN] Frame {src_id} 정합 실패, 이전 포즈 복사")
+            pred_poses.append(pred_poses[-1])
+            continue
+
+        fitness, rmse = compute_fitness(source, target, T_icp)
+        print(f"[ICP] Fitness: {fitness:.4f}, RMSE: {rmse:.4f}")
+
+        if fitness > fitness_thresh:
+            T_i = pred_poses[-1] @ T_icp
+            pred_poses.append(T_i)
+        else:
+            print(f"[WARN] Fitness too low. Skipping frame {src_id}")
+            pred_poses.append(pred_poses[-1])
 
     rmse = compute_ate_rmse(pred_poses, [gt_poses[i] for i in frame_ids])
+    print("[INFO] ATE 평가 시작...")
     print(f"[EVAL] ATE RMSE (GICP): {rmse:.4f} meters")
 
     with open("trajectory_gicp.txt", "w") as f:
