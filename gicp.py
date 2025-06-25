@@ -1,157 +1,149 @@
 import open3d as o3d
 import numpy as np
 import os
-from scipy.spatial import KDTree
+from copy import deepcopy
+from scipy.linalg import inv
 
-def load_point_cloud(file_path, voxel_size=0.2):
-    points = np.fromfile(file_path, dtype=np.float32).reshape(-1, 4)[:, :3]
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(points)
-    return pcd.voxel_down_sample(voxel_size)
-
-def estimate_covariances(pcd, radius=1.0, max_nn=20):
-    kdtree = o3d.geometry.KDTreeFlann(pcd)
+# ───────────── GICP 함수 ─────────────
+def compute_covariances(pcd, k=20):
+    pcd_tree = o3d.geometry.KDTreeFlann(pcd)
     covariances = []
-    pts = np.asarray(pcd.points)
+    points = np.asarray(pcd.points)
 
-    for i in range(len(pts)):
-        _, idxs, _ = kdtree.search_radius_vector_3d(pcd.points[i], radius)
-        if len(idxs) < 5:
-            covariances.append(np.eye(3) * 1e-3)
-            continue
-        neighbors = pts[idxs] - pts[i]
-        cov = neighbors.T @ neighbors / (len(idxs) - 1)
-        U, S, Vt = np.linalg.svd(cov)
-        S = np.clip(S, 1e-6, None)
-        cov = U @ np.diag(S) @ U.T
+    for i in range(len(points)):
+        _, idx, _ = pcd_tree.search_knn_vector_3d(pcd.points[i], k)
+        neighbors = points[idx, :]
+        mean = np.mean(neighbors, axis=0)
+        cov = np.cov((neighbors - mean).T)
+        cov += np.eye(3) * 1e-6
         covariances.append(cov)
+
     return covariances
 
-def se3_hat(xi):
-    omega = xi[:3]
-    v = xi[3:]
-    Omega = np.array([[0, -omega[2], omega[1]],
-                      [omega[2], 0, -omega[0]],
-                      [-omega[1], omega[0], 0]])
-    hat = np.zeros((4, 4))
-    hat[:3, :3] = Omega
-    hat[:3, 3] = v
-    return hat
+def gicp(source, target, max_iterations=10):
+    source_covs = compute_covariances(source)
+    target_covs = compute_covariances(target)
 
-def gicp_icp(src_pts, tgt_pts, src_covs, tgt_covs, init_T=np.eye(4), max_iter=20, tol=1e-4):
-    T = init_T.copy()
-    for _ in range(max_iter):
-        src_transformed = (T[:3, :3] @ src_pts.T).T + T[:3, 3]
-        tree = KDTree(tgt_pts)
-        distances, indices = tree.query(src_transformed)
-        tgt_corr = tgt_pts[indices]
-        cov_combined = []
+    source_tree = o3d.geometry.KDTreeFlann(target)
+    source_points = np.asarray(source.points)
+    target_points = np.asarray(target.points)
 
-        H = np.zeros((6, 6))
-        b = np.zeros((6, 1))
-        for i in range(len(src_transformed)):
-            p = src_transformed[i]
-            q = tgt_corr[i]
-            C = src_covs[i] + tgt_covs[indices[i]]
-            C_inv = np.linalg.inv(C)
+    R = np.eye(3)
+    t = np.zeros(3)
 
-            r = (p - q).reshape(3, 1)
+    for iter in range(max_iterations):
+        A = np.zeros((6, 6))
+        b = np.zeros(6)
+
+        for i in range(len(source_points)):
+            p = source_points[i]
+            p_cov = source_covs[i]
+            p_trans = R @ p + t
+
+            _, idx, _ = source_tree.search_knn_vector_3d(p_trans, 1)
+            q = target_points[idx[0]]
+            q_cov = target_covs[idx[0]]
+
+            C = p_cov + R @ q_cov @ R.T
+            C_inv = inv(C)
+            r = p_trans - q
+
             J = np.zeros((3, 6))
             J[:, :3] = -np.eye(3)
-            J[:, 3:] = -np.array([[0, -p[2], p[1]],
-                                  [p[2], 0, -p[0]],
-                                  [-p[1], p[0], 0]])
-            H += J.T @ C_inv @ J
+            J[:, 3:] = -np.array([
+                [0, -p_trans[2], p_trans[1]],
+                [p_trans[2], 0, -p_trans[0]],
+                [-p_trans[1], p_trans[0], 0]
+            ])
+
+            A += J.T @ C_inv @ J
             b += J.T @ C_inv @ r
 
-        try:
-            dx = np.linalg.solve(H, -b)
-        except np.linalg.LinAlgError:
-            break
+        delta = np.linalg.solve(A, -b)
+        delta_t = delta[:3]
+        delta_angle = delta[3:]
 
-        xi = dx.flatten()
-        T_update = np.eye(4)
-        T_update[:3, :3] = o3d.geometry.get_rotation_matrix_from_axis_angle(xi[3:])
-        T_update[:3, 3] = xi[:3]
-        T = T_update @ T
+        angle = np.linalg.norm(delta_angle)
+        if angle < 1e-6:
+            R_update = np.eye(3)
+        else:
+            axis = delta_angle / angle
+            R_update = o3d.geometry.get_rotation_matrix_from_axis_angle(axis * angle)
 
-        if np.linalg.norm(dx) < tol:
-            break
-    return T
+        R = R_update @ R
+        t = R_update @ t + delta_t
 
-def load_gt_poses_with_indices(file_path):
-    gt_dict = {}
-    with open(file_path, 'r') as f:
-        for line in f:
+    return R, t
+
+# ───────────── 유틸 함수들 ─────────────
+def load_bin_as_pcd(path):
+    points = np.fromfile(path, dtype=np.float32).reshape(-1, 4)[:, :3]
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points)
+    return pcd
+
+def load_poses_kitti(gt_path):
+    poses = []
+    with open(gt_path, 'r') as f:
+        for i, line in enumerate(f):
             values = np.fromstring(line.strip(), sep=' ')
-            if len(values) != 13: continue
-            frame_id = int(values[0])
-            T = np.eye(4)
-            T[:3, :4] = values[1:].reshape(3, 4)
-            gt_dict[frame_id] = T
-    return gt_dict
+            if len(values) == 13:
+                values = values[1:]  # 첫 번째 index 값 제거
+            if len(values) != 12:
+                print(f"[WARN] Line {i+1} has {len(values)} elements. Skipping.")
+                continue
+            T = values.reshape(3, 4)
+            T_homo = np.eye(4)
+            T_homo[:3, :] = T
+            poses.append(T_homo)
+    return poses
 
-def compute_ate_relative(trajectory_est, gt_dict):
+
+def compute_ate_rmse(pred_poses, gt_poses):
     errors = []
-    T0_gt_inv = np.linalg.inv(gt_dict[trajectory_est[0][0]])
-    T0_est_inv = np.linalg.inv(trajectory_est[0][1])
-    for fid, est_pose in trajectory_est:
-        if fid not in gt_dict: continue
-        rel_gt = T0_gt_inv @ gt_dict[fid]
-        rel_est = T0_est_inv @ est_pose
-        errors.append(np.linalg.norm(rel_est[:3, 3] - rel_gt[:3, 3]))
+    for T_pred, T_gt in zip(pred_poses, gt_poses):
+        trans_error = T_pred[:3, 3] - T_gt[:3, 3]
+        errors.append(np.linalg.norm(trans_error))
     return np.sqrt(np.mean(np.square(errors)))
 
-def get_available_frame_ids(base_dir):
-    return sorted([int(f.replace('.bin', '')) for f in os.listdir(base_dir) if f.endswith('.bin')])
+# ───────────── 메인 파이프라인 ─────────────
+def run_gicp_pipeline(bin_dir, gt_pose_path):
+    bin_files = sorted([f for f in os.listdir(bin_dir) if f.endswith('.bin')])
+    gt_poses = load_poses_kitti(gt_pose_path)
+    pred_poses = [np.eye(4)]
 
+    target = load_bin_as_pcd(os.path.join(bin_dir, bin_files[0]))
+
+    for i in range(1, len(gt_poses)):
+        print(f"[INFO] Aligning frame {i-1} → {i}")
+        source = load_bin_as_pcd(os.path.join(bin_dir, bin_files[i]))
+
+        try:
+            R_est, t_est = gicp(source, target)
+        except np.linalg.LinAlgError:
+            print(f"[WARN] Frame {i} 정합 실패, 이전 포즈 복사")
+            pred_poses.append(pred_poses[-1])
+            target = deepcopy(source)
+            continue
+
+        T_delta = np.eye(4)
+        T_delta[:3, :3] = R_est
+        T_delta[:3, 3] = t_est
+        T_i = pred_poses[-1] @ T_delta
+        pred_poses.append(T_i)
+
+        target = deepcopy(source)
+
+    rmse = compute_ate_rmse(pred_poses[:len(gt_poses)], gt_poses)
+    print(f"[EVAL] ATE RMSE: {rmse:.4f} meters")
+
+    return pred_poses
+
+# ───────────── 실행 예시 ─────────────
 if __name__ == "__main__":
-    base_dir = "/home/byeongjae/kitti360/KITTI-360/data_3d_raw/2013_05_28_drive_0002_sync/velodyne_points/data"
-    gt_pose_path = "/home/byeongjae/kitti360/data_poses/2013_05_28_drive_0002_sync/poses.txt"
+    bin_dir = "D:/kitti360/KITTI-360/data_3d_raw/2013_05_28_drive_0004_sync/velodyne_points/data"
+    gt_pose_path = "D:/kitti360/data_poses/2013_05_28_drive_0004_sync/poses.txt"
+    run_gicp_pipeline(bin_dir, gt_pose_path)
 
-    frame_ids = get_available_frame_ids(base_dir)
-    gt_dict = load_gt_poses_with_indices(gt_pose_path)
-    start_idx = max(frame_ids[0], min(gt_dict.keys()))
-    end_idx = start_idx + 200
-    frame_gap = 5
 
-    valid_ids = [fid for fid in range(start_idx, end_idx, frame_gap)
-                 if fid in gt_dict and os.path.exists(f"{base_dir}/{fid:010d}.bin")]
 
-    pose = np.eye(4)
-    global_map = o3d.geometry.PointCloud()
-    trajectory_est = []
-
-    prev_id = valid_ids[0]
-    prev_pcd = load_point_cloud(f"{base_dir}/{prev_id:010d}.bin")
-    prev_pcd.transform(pose)
-    prev_pts = np.asarray(prev_pcd.points)
-    prev_covs = estimate_covariances(prev_pcd)
-    global_map += prev_pcd
-    trajectory_est.append((prev_id, pose.copy()))
-
-    for curr_id in valid_ids[1:]:
-        print(f"[INFO] Aligning frame {curr_id}")
-        curr_pcd = load_point_cloud(f"{base_dir}/{curr_id:010d}.bin")
-        curr_pts = np.asarray(curr_pcd.points)
-        curr_covs = estimate_covariances(curr_pcd)
-
-        T_gt_prev = gt_dict[prev_id]
-        T_gt_curr = gt_dict[curr_id]
-        T_init = np.linalg.inv(T_gt_prev) @ T_gt_curr
-
-        T_icp = gicp_icp(curr_pts, prev_pts, curr_covs, prev_covs, init_T=T_init)
-        pose = pose @ T_icp
-
-        curr_pcd.transform(pose)
-        global_map += curr_pcd
-        trajectory_est.append((curr_id, pose.copy()))
-
-        prev_id = curr_id
-        prev_pts = curr_pts
-        prev_covs = curr_covs
-
-    print("[INFO] ATE 평가 시작...")
-    ate_rmse = compute_ate_relative(trajectory_est, gt_dict)
-    print(f"[EVAL] ATE RMSE: {ate_rmse:.4f} meters")
-    o3d.visualization.draw_geometries([global_map])

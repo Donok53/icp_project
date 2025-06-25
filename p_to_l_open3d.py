@@ -59,8 +59,8 @@ def get_available_frame_ids(base_dir):
     return frame_ids
 
 if __name__ == "__main__":
-    base_dir = "/home/byeongjae/kitti360/KITTI-360/data_3d_raw/2013_05_28_drive_0002_sync/velodyne_points/data"
-    gt_pose_path = "/home/byeongjae/kitti360/data_poses/2013_05_28_drive_0002_sync/poses.txt"
+    base_dir = "D:/kitti360/KITTI-360/data_3d_raw/2013_05_28_drive_0005_sync/velodyne_points/data"
+    gt_pose_path = "D:/kitti360/data_poses/2013_05_28_drive_0005_sync/poses.txt"
 
     frame_ids = get_available_frame_ids(base_dir)
     print(f"[INFO] 사용할 수 있는 프레임 ID 범위: {frame_ids[0]} ~ {frame_ids[-1]}")

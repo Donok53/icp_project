@@ -50,8 +50,8 @@ def get_available_frame_ids(base_dir):
     return sorted([int(f.replace('.bin', '')) for f in os.listdir(base_dir) if f.endswith('.bin')])
 
 if __name__ == "__main__":
-    base_dir = "/home/byeongjae/kitti360/KITTI-360/data_3d_raw/2013_05_28_drive_0002_sync/velodyne_points/data"
-    gt_pose_path = "/home/byeongjae/kitti360/data_poses/2013_05_28_drive_0002_sync/poses.txt"
+    base_dir = "D:/kitti360/KITTI-360/data_3d_raw/2013_05_28_drive_0004_sync/velodyne_points/data"
+    gt_pose_path = "D:/kitti360/data_poses/2013_05_28_drive_0004_sync/poses.txt"
 
     frame_ids = get_available_frame_ids(base_dir)
     gt_dict = load_gt_poses_with_indices(gt_pose_path)
