@@ -54,9 +54,14 @@ def run_gicp(source_pcd, target_pcd, init_trans, optimizer='least_squares', max_
 
             H += J.T @ C_inv @ J
             g += J.T @ C_inv @ r
-
         try:
-            dx, *_ = np.linalg.lstsq(H, -g, rcond=None)
+            if optimizer == 'lm':
+                lambda_ = 1e-3
+                dx = -np.linalg.solve(H + lambda_ * np.eye(6), g)
+            elif optimizer in ['least_squares', 'gauss_newton']:
+                dx = -np.linalg.solve(H, g)
+            else:
+                raise ValueError(f"Unsupported optimizer: {optimizer}")
         except np.linalg.LinAlgError:
             print("[WARN] Singular matrix")
             return None, 0.0, float('inf')
