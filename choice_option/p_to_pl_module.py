@@ -21,7 +21,7 @@ def compute_normals(points, max_nn=30):
         normals.append(eigvecs[:, 0])
     return np.stack(normals)
 
-def run_p2pl_icp(source_pcd, target_pcd, init_trans=np.eye(4), max_iter=20, tol=1e-6):
+def run_p2pl_icp(source_pcd, target_pcd, init_trans=np.eye(4), optimizer='least_squares', max_iter=20, tol=1e-6):
     source_pts = np.asarray(source_pcd.points)
     target_pts = np.asarray(target_pcd.points)
     target_normals = compute_normals(target_pts)
@@ -47,8 +47,15 @@ def run_p2pl_icp(source_pcd, target_pcd, init_trans=np.eye(4), max_iter=20, tol=
             H += J.T @ J
             b += J.T * r
 
+        # ------------------- 여기서 optimizer 적용 -------------------
         try:
-            delta = -np.linalg.solve(H, b)
+            if optimizer == 'lm':
+                lambda_ = 1e-3
+                delta = -np.linalg.solve(H + lambda_ * np.eye(6), b)
+            elif optimizer in ['least_squares', 'gauss_newton']:
+                delta = -np.linalg.solve(H, b)
+            else:
+                raise ValueError(f"Unsupported optimizer: {optimizer}")
         except np.linalg.LinAlgError:
             print("[WARN] Singular matrix")
             break

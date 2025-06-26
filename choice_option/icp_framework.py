@@ -50,7 +50,7 @@ def run_icp(method, optimizer, source, target, init_trans):
         target.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=1.0, max_nn=30))
         return run_point_to_line_icp_custom(source, target, init_trans, optimizer)
     elif method == 'p_to_pl':
-        return run_p2pl_icp(source, target, init_trans)
+        return run_p2pl_icp(source, target, init_trans, optimizer)
     elif method == 'gicp':
         return run_gicp(source, target, init_trans, optimizer)
     else:
@@ -125,8 +125,8 @@ def main(args):
 # ------------------ Entry Point ------------------
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_dir', type=str, default='/home/byeongjae/kitti360/KITTI-360/data_3d_raw/2013_05_28_drive_0000_sync/velodyne_points/data', help='KITTI360 bin file directory')
-    parser.add_argument('--pose_path', type=str, default='/home/byeongjae/kitti360/data_poses/2013_05_28_drive_0000_sync/poses.txt',  help='GT pose file path')
+    parser.add_argument('--data_dir', type=str, default='D:/kitti360/KITTI-360/data_3d_raw/2013_05_28_drive_0000_sync/velodyne_points/data', help='KITTI360 bin file directory')
+    parser.add_argument('--pose_path', type=str, default='D:/kitti360/data_poses/2013_05_28_drive_0000_sync/poses.txt',  help='GT pose file path')
     parser.add_argument('--method', type=str, default='p_to_p', choices=['p_to_p', 'p_to_l', 'p_to_pl', 'gicp'])
     parser.add_argument('--optimizer', type=str, default='least_squares',
                         choices=['least_squares', 'gauss_newton', 'lm'])

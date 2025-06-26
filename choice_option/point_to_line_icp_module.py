@@ -24,7 +24,7 @@ def compute_line_directions(pcd, k=10):
 
     return np.array(directions)
 
-def run_point_to_line_icp_custom(source_pcd, target_pcd, init_trans=np.eye(4), max_iter=20, tol=1e-6):
+def run_point_to_line_icp_custom(source_pcd, target_pcd, init_trans=np.eye(4), optimizer='least_squares', max_iter=20, tol=1e-6):
     source_pts = np.asarray(source_pcd.points)
     target_pts = np.asarray(target_pcd.points)
 
