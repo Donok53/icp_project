@@ -55,7 +55,13 @@ def run_point_to_line_icp_custom(source_pcd, target_pcd, init_trans=np.eye(4), o
             g += J.T @ r
 
         try:
-            dx, *_ = np.linalg.lstsq(H, -g, rcond=None)
+            if optimizer == 'lm':
+                lambda_ = 1e-3
+                dx = -np.linalg.solve(H + lambda_ * np.eye(6), g)
+            elif optimizer in ['least_squares', 'gauss_newton']:
+                dx = -np.linalg.solve(H, g)
+            else:
+                raise ValueError(f"Unsupported optimizer: {optimizer}")
         except np.linalg.LinAlgError:
             print("[WARN] Singular matrix during optimization.")
             break
