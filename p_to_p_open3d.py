@@ -57,8 +57,8 @@ def compute_ate_relative(trajectory_est, gt_dict):
 
 
 if __name__ == "__main__":
-    base_dir = "/home/byeongjae/kitti360/KITTI-360/data_3d_raw/2013_05_28_drive_0000_sync/velodyne_points/data"
-    gt_pose_path = "/home/byeongjae/kitti360/data_poses/2013_05_28_drive_0000_sync/poses.txt"
+    base_dir = "D:/kitti360/KITTI-360/data_3d_raw/2013_05_28_drive_0002_sync/velodyne_points/data"
+    gt_pose_path = "D:/kitti360/data_poses/2013_05_28_drive_0002_sync/poses.txt"
 
     start_idx = 0
     end_idx = 90        # 프레임 개수 조절 가능

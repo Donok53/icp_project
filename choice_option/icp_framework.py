@@ -2,6 +2,9 @@ import open3d as o3d
 import numpy as np
 import argparse
 import os
+from scipy.spatial import cKDTree
+import copy
+
 from scipy.spatial import KDTree
 from choice_option.p_to_p_custom import run_p2p_icp
 from choice_option.p_to_pl_module import run_p2pl_icp
@@ -10,10 +13,37 @@ from choice_option.point_to_line_icp_module import run_point_to_line_icp_custom
 
 # ------------------ 공통 유틸 함수 ------------------
 def load_point_cloud(file_path, voxel_size=0.1):
-    points = np.fromfile(file_path, dtype=np.float32).reshape(-1, 4)[:, :3]
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(points)
-    return pcd.voxel_down_sample(voxel_size)
+# 1) Voxel downsample
+    pts = np.fromfile(file_path, dtype=np.float32).reshape(-1, 4)[:, :3]
+    pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pts))
+    pcd = pcd.voxel_down_sample(voxel_size)
+    # 2) Statistical Outlier Removal
+    pcd, _ = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
+    return pcd
+
+def multiscale_icp(method, optimizer, source, target, init_trans, 
+                   scales=[0.5, 0.2, 0.1], tol=1e-6):
+    """
+    coarse->fine 멀티스케일 ICP 수행
+    scales: voxel_size 리스트
+    """
+    T_total = init_trans.copy()
+    for voxel in scales:
+        # 1) 다운샘플
+        src_ds = source.voxel_down_sample(voxel)
+        tgt_ds = target.voxel_down_sample(voxel)
+        # 2) normal 재계산 (필요 시)
+        src_ds.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel*2, max_nn=30))
+        tgt_ds.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel*2, max_nn=30))
+        # 3) ICP
+        T_delta, fitness, rmse = run_icp(method, optimizer, src_ds, tgt_ds, np.eye(4))
+        # 4) 누적 변환
+        T_total = T_delta @ T_total
+        # 5) source, target 에 적용
+        source = copy.deepcopy(source).transform(T_total)
+        target = copy.deepcopy(target)
+    return T_total, fitness, rmse
+
 
 def load_gt_poses_with_indices(file_path):
     gt_dict = {}
@@ -101,20 +131,59 @@ def main(args):
         print(f"[INFO] Aligning frame {curr_id}")
         curr_pcd = load_point_cloud(f"{base_dir}/{curr_id:010d}.bin")
 
+        # GT 기반 초기 추정
         T_gt_prev = gt_dict[prev_id]
         T_gt_curr = gt_dict[curr_id]
         T_init = np.linalg.inv(T_gt_prev) @ T_gt_curr
 
-        T_icp, fitness, rmse = run_icp(args.method, args.optimizer, curr_pcd, prev_pcd, T_init)
+        # ICP 수행
+        if args.multiscale:
+            T_icp, fitness, rmse = multiscale_icp(
+                args.method, args.optimizer,
+                curr_pcd, prev_pcd, T_init,
+                scales=[0.5, 0.2, 0.1])
+        else:
+            T_icp, fitness, rmse = run_icp(
+                args.method, args.optimizer,
+                curr_pcd, prev_pcd, T_init)
         print(f"[ICP] Fitness: {fitness:.4f}, RMSE: {rmse:.4f}")
 
-        pose = pose @ T_icp
-        curr_pcd.transform(pose)
-        global_map += curr_pcd
-        trajectory_est.append((curr_id, pose.copy()))
+        # ── inlier 점만 골라서 global_map에 추가 ──
+        # ➊ curr_pcd 점들에 ICP 변환 적용
+        src_pts   = np.asarray(curr_pcd.points)
+        src_trans = (T_icp[:3, :3] @ src_pts.T).T + T_icp[:3, 3]
 
+        # ➋ prev_pcd로 KDTree 매칭 → inlier_pts 선택
+        tgt_pts = np.asarray(prev_pcd.points)
+        tree    = cKDTree(tgt_pts)
+        dists, _ = tree.query(src_trans)
+        thr = np.mean(dists) + np.std(dists)
+        inlier_pts = src_trans[dists < thr]
+
+        # ➌ global_map 대비 중복 제거
+        if len(global_map.points) > 0:
+            glob_pts = np.asarray(global_map.points)
+            tree_g   = cKDTree(glob_pts)
+            d2g, _   = tree_g.query(inlier_pts)
+            inlier_pts = inlier_pts[d2g > 0.2]   # 0.2m 이내 중복 제거
+
+        # ➍ inlier_pts로 PointCloud 생성
+        inlier_pcd = o3d.geometry.PointCloud()
+        inlier_pcd.points = o3d.utility.Vector3dVector(inlier_pts)
+        inlier_pcd.paint_uniform_color([0.7, 0.7, 0.7])
+
+        # ➎ 글로벌 맵에 누적 + 필터링
+        global_map += inlier_pcd
+        global_map = global_map.voxel_down_sample(voxel_size=0.2)
+        global_map, _ = global_map.remove_statistical_outlier(
+            nb_neighbors=20, std_ratio=2.0)
+
+        # ➏ 궤적 업데이트 & 다음 프레임 준비
+        pose = pose @ T_icp
+        trajectory_est.append((curr_id, pose.copy()))
         prev_pcd = curr_pcd
         prev_id = curr_id
+
 
     print("[INFO] ATE 평가 시작...")
     ate_rmse = compute_ate_relative(trajectory_est, gt_dict)
@@ -131,6 +200,7 @@ if __name__ == '__main__':
     parser.add_argument('--optimizer', type=str, default='least_squares',
                         choices=['least_squares', 'gauss_newton', 'lm'])
     parser.add_argument('--frame_gap', type=int, default=5)
+    parser.add_argument('--multiscale', action='store_true', help='Enable multiscale ICP (coarse→fine)')
     args = parser.parse_args()
 
     main(args)
