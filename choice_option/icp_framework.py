@@ -126,6 +126,10 @@ def run_point_to_plane_icp(source, target, init_trans):
 
 # ------------------ 메인 실행 ------------------
 def main(args):
+    
+    method    = args.method
+    optimizer = args.optimizer
+    
     base_dir = args.data_dir
     gt_pose_path = args.pose_path
 
@@ -210,7 +214,28 @@ def main(args):
     ate_rmse = compute_ate_relative(trajectory_est, gt_dict)
     print(f"[EVAL] ATE RMSE: {ate_rmse:.4f} meters")
 
+    # ▶ 화면에 한 번만 띄우고
     o3d.visualization.draw_geometries([global_map])
+
+    # ▶ 결과 저장
+    out_dir = "results"
+    os.makedirs(out_dir, exist_ok=True)
+    pcd_fname = f"{method}_{optimizer}_global_map.ply"
+    img_fname = f"{method}_{optimizer}_map_view.png"
+    pcd_path = os.path.join(out_dir, pcd_fname)
+    img_path = os.path.join(out_dir, img_fname)
+
+    o3d.io.write_point_cloud(pcd_path, global_map)
+    print(f"Saved point cloud to: {pcd_path}")
+
+    vis = o3d.visualization.Visualizer()
+    vis.create_window(visible=False)
+    vis.add_geometry(global_map)
+    vis.poll_events()
+    vis.update_renderer()
+    vis.capture_screen_image(img_path)
+    vis.destroy_window()
+    print(f"Saved screenshot to: {img_path}")
 
 
 # ------------------ Entry Point ------------------
