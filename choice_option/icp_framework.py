@@ -90,12 +90,6 @@ def run_icp(method, optimizer, source, target, init_trans):
     if method == "p_to_p":
         return run_p2p_icp(source, target, init_trans)
     elif method == "p_to_l":
-        source.estimate_normals(
-            o3d.geometry.KDTreeSearchParamHybrid(radius=1.0, max_nn=30)
-        )
-        target.estimate_normals(
-            o3d.geometry.KDTreeSearchParamHybrid(radius=1.0, max_nn=30)
-        )
         return run_point_to_line_icp_custom(source, target, init_trans, optimizer)
     elif method == "p_to_pl":
         return run_p2pl_icp(source, target, init_trans, optimizer)

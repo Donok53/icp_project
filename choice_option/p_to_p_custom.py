@@ -2,11 +2,6 @@ import numpy as np
 from scipy.spatial import KDTree
 import open3d as o3d
 
-def load_point_cloud(file_path, voxel_size=0.2):
-    points = np.fromfile(file_path, dtype=np.float32).reshape(-1, 4)[:, :3]
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(points)
-    return pcd.voxel_down_sample(voxel_size)
 
 def compute_transformation_svd(source, target):
     source_center = np.mean(source, axis=0)
@@ -29,6 +24,7 @@ def compute_transformation_svd(source, target):
     T[:3, :3] = R
     T[:3, 3] = t
     return T
+
 
 def run_p2p_icp(source_pcd, target_pcd, init_trans=np.eye(4), max_iter=20, tol=1e-6):
     src_pts = np.asarray(source_pcd.points)
@@ -53,6 +49,10 @@ def run_p2p_icp(source_pcd, target_pcd, init_trans=np.eye(4), max_iter=20, tol=1
     final_dists = np.linalg.norm(src_transformed - target_corr, axis=1)
     inlier_mask = final_dists < 2.0
     fitness = np.sum(inlier_mask) / len(final_dists)
-    rmse = np.sqrt(np.mean(final_dists[inlier_mask] ** 2)) if np.any(inlier_mask) else float('inf')
+    rmse = (
+        np.sqrt(np.mean(final_dists[inlier_mask] ** 2))
+        if np.any(inlier_mask)
+        else float("inf")
+    )
 
     return T_total, fitness, rmse
