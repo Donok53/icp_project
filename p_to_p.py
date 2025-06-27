@@ -2,6 +2,7 @@ import open3d as o3d
 import numpy as np
 import os
 
+
 def load_point_cloud(file_path, voxel_size=0.2):
     """KITTI 포맷 .bin 파일 로드 및 다운샘플"""
     if not os.path.exists(file_path):
@@ -11,22 +12,28 @@ def load_point_cloud(file_path, voxel_size=0.2):
     pcd.points = o3d.utility.Vector3dVector(points)
     return pcd.voxel_down_sample(voxel_size)
 
+
 def run_icp_point_to_line(source, target, init_trans, threshold=1.0):
     """Open3D의 Point-to-Line ICP 실행 (GT 초기정렬 적용)"""
     source.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=1.0, max_nn=30))
     target.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=1.0, max_nn=30))
 
     reg = o3d.pipelines.registration.registration_icp(
-        source, target, threshold, init_trans,
-        o3d.pipelines.registration.TransformationEstimationPointToPlane())
+        source,
+        target,
+        threshold,
+        init_trans,
+        o3d.pipelines.registration.TransformationEstimationPointToPlane(),
+    )
     return reg.transformation, reg.fitness, reg.inlier_rmse
+
 
 def load_gt_poses_with_indices(file_path):
     """GT poses.txt를 frame_id: 4x4 pose 딕셔너리로 불러오기"""
     gt_dict = {}
-    with open(file_path, 'r') as f:
+    with open(file_path, "r") as f:
         for line in f:
-            values = np.fromstring(line.strip(), sep=' ')
+            values = np.fromstring(line.strip(), sep=" ")
             if len(values) != 13:
                 continue
             frame_id = int(values[0])
@@ -35,6 +42,7 @@ def load_gt_poses_with_indices(file_path):
             T[:3, :4] = pose_vec.reshape(3, 4)
             gt_dict[frame_id] = T
     return gt_dict
+
 
 def compute_ate_relative(trajectory_est, gt_dict):
     """ATE (RMSE) 계산 - 상대 위치 기반"""
@@ -59,12 +67,14 @@ def compute_ate_relative(trajectory_est, gt_dict):
     ate_rmse = np.sqrt(np.mean(np.square(errors)))
     return ate_rmse
 
+
 def get_available_frame_ids(base_dir):
     files = os.listdir(base_dir)
-    frame_ids = sorted([
-        int(f.replace('.bin', '')) for f in files if f.endswith('.bin')
-    ])
+    frame_ids = sorted(
+        [int(f.replace(".bin", "")) for f in files if f.endswith(".bin")]
+    )
     return frame_ids
+
 
 if __name__ == "__main__":
     base_dir = "D:/kitti360/KITTI-360/data_3d_raw/2013_05_28_drive_0000_sync/velodyne_points/data"
@@ -77,12 +87,15 @@ if __name__ == "__main__":
     print(f"[INFO] GT pose 개수: {len(gt_dict)}")
 
     start_idx = max(frame_ids[0], min(gt_dict.keys()))
-    end_idx = start_idx + 200     # 원하는 만큼 조절 가능
+    end_idx = start_idx + 4000  # 원하는 만큼 조절 가능
     frame_gap = 5
     threshold = 0.8
 
-    valid_frame_ids = [fid for fid in range(start_idx, end_idx, frame_gap)
-                       if fid in gt_dict and os.path.exists(f"{base_dir}/{fid:010d}.bin")]
+    valid_frame_ids = [
+        fid
+        for fid in range(start_idx, end_idx, frame_gap)
+        if fid in gt_dict and os.path.exists(f"{base_dir}/{fid:010d}.bin")
+    ]
 
     print(f"[INFO] 실제 정합 대상 프레임 수: {len(valid_frame_ids)}")
 
@@ -98,7 +111,7 @@ if __name__ == "__main__":
 
     for i in range(1, len(valid_frame_ids)):
         curr_id = valid_frame_ids[i]
-        prev_id = valid_frame_ids[i-1]
+        prev_id = valid_frame_ids[i - 1]
         print(f"[INFO] Aligning frame {curr_id}")
 
         curr_pcd = load_point_cloud(f"{base_dir}/{curr_id:010d}.bin")
@@ -109,7 +122,9 @@ if __name__ == "__main__":
         init_T = np.linalg.inv(T_gt_prev) @ T_gt_curr
 
         # === ICP ===
-        T_icp, fitness, rmse = run_icp_point_to_line(curr_pcd, prev_pcd, init_T, threshold)
+        T_icp, fitness, rmse = run_icp_point_to_line(
+            curr_pcd, prev_pcd, init_T, threshold
+        )
         print(f"[ICP] Fitness: {fitness:.4f}, RMSE: {rmse:.4f}")
 
         if fitness > 0.9:  # ✅ 다시 적용
@@ -122,8 +137,6 @@ if __name__ == "__main__":
         else:
             print(f"[WARN] 정합 실패 (fitness={fitness:.2f}), pose 누적 생략")
 
-        
-
     # === ATE 평가 ===
     print("[INFO] ATE 평가 시작...")
     ate_rmse = compute_ate_relative(trajectory_est, gt_dict)
@@ -131,6 +144,3 @@ if __name__ == "__main__":
 
     print("[INFO] 전체 맵 정합 완료. 시각화 중...")
     o3d.visualization.draw_geometries([global_map])
-
-
-

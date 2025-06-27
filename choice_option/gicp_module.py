@@ -2,12 +2,10 @@ import numpy as np
 from scipy.spatial import KDTree
 import open3d as o3d
 
+
 def skew(x):
-    return np.array([
-        [0, -x[2], x[1]],
-        [x[2], 0, -x[0]],
-        [-x[1], x[0], 0]
-    ])
+    return np.array([[0, -x[2], x[1]], [x[2], 0, -x[0]], [-x[1], x[0], 0]])
+
 
 def compute_covariances(pcd, max_nn=30):
     pts = np.asarray(pcd.points)
@@ -16,14 +14,17 @@ def compute_covariances(pcd, max_nn=30):
     for pt in pts:
         dists, idxs = tree.query(pt, k=max_nn)
         if len(idxs.shape) == 0 or len(idxs) < 3:
-            cov = np.eye(3) * 1e-2
+            cov = np.eye(3) * 1e-6
         else:
             neighbors = pts[idxs] - pt
-            cov = np.cov(neighbors.T) + np.eye(3) * 1e-2
+            cov = np.cov(neighbors.T) + np.eye(3) * 1e-6
         covariances.append(cov)
     return np.stack(covariances)
 
-def run_gicp(source_pcd, target_pcd, init_trans, optimizer='least_squares', max_iter=20, tol=1e-6):
+
+def run_gicp(
+    source_pcd, target_pcd, init_trans, optimizer="least_squares", max_iter=20, tol=1e-6
+):
     src_pts = np.asarray(source_pcd.points)
     tgt_pts = np.asarray(target_pcd.points)
     src_covs = compute_covariances(source_pcd)
@@ -39,9 +40,11 @@ def run_gicp(source_pcd, target_pcd, init_trans, optimizer='least_squares', max_
         tgt_corr_cov = tgt_covs[idxs]
 
         H, g = np.zeros((6, 6)), np.zeros((6, 1))
-        for p, q, cov_p, cov_q in zip(src_transformed, tgt_corr, src_covs, tgt_corr_cov):
+        for p, q, cov_p, cov_q in zip(
+            src_transformed, tgt_corr, src_covs, tgt_corr_cov
+        ):
             R = T_total[:3, :3]
-            C = cov_p + R @ cov_q @ R.T + np.eye(3) * 1e-2
+            C = cov_p + R @ cov_q @ R.T + np.eye(3) * 1e-6
             try:
                 C_inv = np.linalg.inv(C)
             except np.linalg.LinAlgError:
@@ -55,21 +58,21 @@ def run_gicp(source_pcd, target_pcd, init_trans, optimizer='least_squares', max_
             H += J.T @ C_inv @ J
             g += J.T @ C_inv @ r
         try:
-            if optimizer == 'lm':
-                lambda_ = 1e-3
+            if optimizer == "lm":
+                lambda_ = 1e-4
                 dx = -np.linalg.solve(H + lambda_ * np.eye(6), g)
-            elif optimizer in ['least_squares', 'gauss_newton']:
+            elif optimizer in ["least_squares", "gauss_newton"]:
                 dx = -np.linalg.solve(H, g)
             else:
                 raise ValueError(f"Unsupported optimizer: {optimizer}")
         except np.linalg.LinAlgError:
             print("[WARN] Singular matrix")
-            return None, 0.0, float('inf')
+            return None, 0.0, float("inf")
 
         delta = dx.flatten()
         if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
             print("[WARN] Invalid delta")
-            return None, 0.0, float('inf')
+            return None, 0.0, float("inf")
 
         R_delta = o3d.geometry.get_rotation_matrix_from_axis_angle(delta[:3])
         t_delta = delta[3:]
@@ -85,8 +88,12 @@ def run_gicp(source_pcd, target_pcd, init_trans, optimizer='least_squares', max_
 
     # 피트니스 및 RMSE 계산
     final_dists = np.linalg.norm(src_transformed - tgt_corr, axis=1)
-    inlier_mask = final_dists < 2.0  # threshold 예시
+    inlier_mask = final_dists < 1.0  # threshold 예시
     fitness = np.sum(inlier_mask) / len(final_dists)
-    rmse = np.sqrt(np.mean(final_dists[inlier_mask] ** 2)) if np.any(inlier_mask) else float('inf')
+    rmse = (
+        np.sqrt(np.mean(final_dists[inlier_mask] ** 2))
+        if np.any(inlier_mask)
+        else float("inf")
+    )
 
     return T_total, fitness, rmse

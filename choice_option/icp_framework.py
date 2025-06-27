@@ -11,9 +11,10 @@ from choice_option.p_to_pl_module import run_p2pl_icp
 from choice_option.gicp_module import run_gicp
 from choice_option.point_to_line_icp_module import run_point_to_line_icp_custom
 
+
 # ------------------ 공통 유틸 함수 ------------------
 def load_point_cloud(file_path, voxel_size=0.1):
-# 1) Voxel downsample
+    # 1) Voxel downsample
     pts = np.fromfile(file_path, dtype=np.float32).reshape(-1, 4)[:, :3]
     pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pts))
     pcd = pcd.voxel_down_sample(voxel_size)
@@ -21,8 +22,10 @@ def load_point_cloud(file_path, voxel_size=0.1):
     pcd, _ = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
     return pcd
 
-def multiscale_icp(method, optimizer, source, target, init_trans, 
-                   scales=[0.5, 0.2, 0.1], tol=1e-6):
+
+def multiscale_icp(
+    method, optimizer, source, target, init_trans, scales=[0.5, 0.2, 0.1], tol=1e-6
+):
     """
     coarse->fine 멀티스케일 ICP 수행
     scales: voxel_size 리스트
@@ -33,8 +36,12 @@ def multiscale_icp(method, optimizer, source, target, init_trans,
         src_ds = source.voxel_down_sample(voxel)
         tgt_ds = target.voxel_down_sample(voxel)
         # 2) normal 재계산 (필요 시)
-        src_ds.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel*2, max_nn=30))
-        tgt_ds.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel*2, max_nn=30))
+        src_ds.estimate_normals(
+            o3d.geometry.KDTreeSearchParamHybrid(radius=voxel * 2, max_nn=30)
+        )
+        tgt_ds.estimate_normals(
+            o3d.geometry.KDTreeSearchParamHybrid(radius=voxel * 2, max_nn=30)
+        )
         # 3) ICP
         T_delta, fitness, rmse = run_icp(method, optimizer, src_ds, tgt_ds, np.eye(4))
         # 4) 누적 변환
@@ -47,58 +54,79 @@ def multiscale_icp(method, optimizer, source, target, init_trans,
 
 def load_gt_poses_with_indices(file_path):
     gt_dict = {}
-    with open(file_path, 'r') as f:
+    with open(file_path, "r") as f:
         for line in f:
-            values = np.fromstring(line.strip(), sep=' ')
-            if len(values) != 13: continue
+            values = np.fromstring(line.strip(), sep=" ")
+            if len(values) != 13:
+                continue
             frame_id = int(values[0])
             T = np.eye(4)
             T[:3, :4] = values[1:].reshape(3, 4)
             gt_dict[frame_id] = T
     return gt_dict
 
+
 def compute_ate_relative(trajectory_est, gt_dict):
     errors = []
     T0_gt_inv = np.linalg.inv(gt_dict[trajectory_est[0][0]])
     T0_est_inv = np.linalg.inv(trajectory_est[0][1])
     for fid, est_pose in trajectory_est:
-        if fid not in gt_dict: continue
+        if fid not in gt_dict:
+            continue
         rel_gt = T0_gt_inv @ gt_dict[fid]
         rel_est = T0_est_inv @ est_pose
         errors.append(np.linalg.norm(rel_est[:3, 3] - rel_gt[:3, 3]))
     return np.sqrt(np.mean(np.square(errors)))
 
+
 def get_available_frame_ids(base_dir):
-    return sorted([int(f.replace('.bin', '')) for f in os.listdir(base_dir) if f.endswith('.bin')])
+    return sorted(
+        [int(f.replace(".bin", "")) for f in os.listdir(base_dir) if f.endswith(".bin")]
+    )
+
 
 # ------------------ 정합 알고리즘 선택 ------------------
 def run_icp(method, optimizer, source, target, init_trans):
-    if method == 'p_to_p':
+    if method == "p_to_p":
         return run_p2p_icp(source, target, init_trans)
-    elif method == 'p_to_l':
-        source.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=1.0, max_nn=30))
-        target.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=1.0, max_nn=30))
+    elif method == "p_to_l":
+        source.estimate_normals(
+            o3d.geometry.KDTreeSearchParamHybrid(radius=1.0, max_nn=30)
+        )
+        target.estimate_normals(
+            o3d.geometry.KDTreeSearchParamHybrid(radius=1.0, max_nn=30)
+        )
         return run_point_to_line_icp_custom(source, target, init_trans, optimizer)
-    elif method == 'p_to_pl':
+    elif method == "p_to_pl":
         return run_p2pl_icp(source, target, init_trans, optimizer)
-    elif method == 'gicp':
+    elif method == "gicp":
         return run_gicp(source, target, init_trans, optimizer)
     else:
         raise NotImplementedError(f"Unknown ICP method: {method}")
 
+
 # ------------------ ICP 방법 정의 ------------------
 def run_point_to_point_icp(source, target, init_trans):
     reg = o3d.pipelines.registration.registration_icp(
-        source, target, 1.5, init_trans,
-        o3d.pipelines.registration.TransformationEstimationPointToPoint())
+        source,
+        target,
+        1.5,
+        init_trans,
+        o3d.pipelines.registration.TransformationEstimationPointToPoint(),
+    )
     return reg.transformation, reg.fitness, reg.inlier_rmse
+
 
 def run_point_to_plane_icp(source, target, init_trans):
     source.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=1.5, max_nn=50))
     target.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=1.5, max_nn=50))
     reg = o3d.pipelines.registration.registration_icp(
-        source, target, 1.5, init_trans,
-        o3d.pipelines.registration.TransformationEstimationPointToPlane())
+        source,
+        target,
+        1.5,
+        init_trans,
+        o3d.pipelines.registration.TransformationEstimationPointToPlane(),
+    )
     return reg.transformation, reg.fitness, reg.inlier_rmse
 
 
@@ -114,8 +142,11 @@ def main(args):
     end_idx = start_idx + 200
     frame_gap = args.frame_gap
 
-    valid_ids = [fid for fid in range(start_idx, end_idx, frame_gap)
-                 if fid in gt_dict and os.path.exists(f"{base_dir}/{fid:010d}.bin")]
+    valid_ids = [
+        fid
+        for fid in range(start_idx, end_idx, frame_gap)
+        if fid in gt_dict and os.path.exists(f"{base_dir}/{fid:010d}.bin")
+    ]
 
     pose = np.eye(4)
     global_map = o3d.geometry.PointCloud()
@@ -139,44 +170,41 @@ def main(args):
         # ICP 수행
         if args.multiscale:
             T_icp, fitness, rmse = multiscale_icp(
-                args.method, args.optimizer,
-                curr_pcd, prev_pcd, T_init,
-                scales=[0.5, 0.2, 0.1])
+                args.method,
+                args.optimizer,
+                curr_pcd,
+                prev_pcd,
+                T_init,
+                scales=[0.5, 0.2, 0.1],
+            )
         else:
             T_icp, fitness, rmse = run_icp(
-                args.method, args.optimizer,
-                curr_pcd, prev_pcd, T_init)
+                args.method, args.optimizer, curr_pcd, prev_pcd, T_init
+            )
         print(f"[ICP] Fitness: {fitness:.4f}, RMSE: {rmse:.4f}")
 
         # ── inlier 점만 골라서 global_map에 추가 ──
         # ➊ curr_pcd 점들에 ICP 변환 적용
-        src_pts   = np.asarray(curr_pcd.points)
+        src_pts = np.asarray(curr_pcd.points)
         src_trans = (T_icp[:3, :3] @ src_pts.T).T + T_icp[:3, 3]
 
-        # ➋ prev_pcd로 KDTree 매칭 → inlier_pts 선택
-        tgt_pts = np.asarray(prev_pcd.points)
-        tree    = cKDTree(tgt_pts)
-        dists, _ = tree.query(src_trans)
-        thr = np.mean(dists) + np.std(dists)
+        # ➋ prev_pcd로 KDTree 매칭 → inlier_pts 선택 (고정 thr)
+        dists, _ = cKDTree(np.asarray(prev_pcd.points)).query(src_trans)
+        thr = np.mean(dists) + 0.5 * np.std(dists)
         inlier_pts = src_trans[dists < thr]
 
-        # ➌ global_map 대비 중복 제거
-        if len(global_map.points) > 0:
-            glob_pts = np.asarray(global_map.points)
-            tree_g   = cKDTree(glob_pts)
-            d2g, _   = tree_g.query(inlier_pts)
-            inlier_pts = inlier_pts[d2g > 0.2]   # 0.2m 이내 중복 제거
-
-        # ➍ inlier_pts로 PointCloud 생성
+        # ➌ inlier_pts로 PointCloud 생성 + 완전 중복 제거
         inlier_pcd = o3d.geometry.PointCloud()
         inlier_pcd.points = o3d.utility.Vector3dVector(inlier_pts)
+        inlier_pcd.remove_duplicated_points()
+        inlier_pcd.remove_non_finite_points()
         inlier_pcd.paint_uniform_color([0.7, 0.7, 0.7])
 
-        # ➎ 글로벌 맵에 누적 + 필터링
-        global_map += inlier_pcd
-        global_map = global_map.voxel_down_sample(voxel_size=0.2)
+        # ➍ global_map에 누적 + 다운샘플링/아웃라이어 제거
+        global_map = global_map.voxel_down_sample(voxel_size=0.15)
         global_map, _ = global_map.remove_statistical_outlier(
-            nb_neighbors=20, std_ratio=2.0)
+            nb_neighbors=10, std_ratio=3.0
+        )
 
         # ➏ 궤적 업데이트 & 다음 프레임 준비
         pose = pose @ T_icp
@@ -184,23 +212,44 @@ def main(args):
         prev_pcd = curr_pcd
         prev_id = curr_id
 
-
     print("[INFO] ATE 평가 시작...")
     ate_rmse = compute_ate_relative(trajectory_est, gt_dict)
     print(f"[EVAL] ATE RMSE: {ate_rmse:.4f} meters")
 
     o3d.visualization.draw_geometries([global_map])
 
+
 # ------------------ Entry Point ------------------
-if __name__ == '__main__':
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_dir', type=str, default='D:/kitti360/KITTI-360/data_3d_raw/2013_05_28_drive_0000_sync/velodyne_points/data', help='KITTI360 bin file directory')
-    parser.add_argument('--pose_path', type=str, default='D:/kitti360/data_poses/2013_05_28_drive_0000_sync/poses.txt',  help='GT pose file path')
-    parser.add_argument('--method', type=str, default='p_to_p', choices=['p_to_p', 'p_to_l', 'p_to_pl', 'gicp'])
-    parser.add_argument('--optimizer', type=str, default='least_squares',
-                        choices=['least_squares', 'gauss_newton', 'lm'])
-    parser.add_argument('--frame_gap', type=int, default=5)
-    parser.add_argument('--multiscale', action='store_true', help='Enable multiscale ICP (coarse→fine)')
+    parser.add_argument(
+        "--data_dir",
+        type=str,
+        default="D:/kitti360/KITTI-360/data_3d_raw/2013_05_28_drive_0003_sync/velodyne_points/data",
+        help="KITTI360 bin file directory",
+    )
+    parser.add_argument(
+        "--pose_path",
+        type=str,
+        default="D:/kitti360/data_poses/2013_05_28_drive_0003_sync/poses.txt",
+        help="GT pose file path",
+    )
+    parser.add_argument(
+        "--method",
+        type=str,
+        default="p_to_p",
+        choices=["p_to_p", "p_to_l", "p_to_pl", "gicp"],
+    )
+    parser.add_argument(
+        "--optimizer",
+        type=str,
+        default="least_squares",
+        choices=["least_squares", "gauss_newton", "lm"],
+    )
+    parser.add_argument("--frame_gap", type=int, default=5)
+    parser.add_argument(
+        "--multiscale", action="store_true", help="Enable multiscale ICP (coarse→fine)"
+    )
     args = parser.parse_args()
 
     main(args)
