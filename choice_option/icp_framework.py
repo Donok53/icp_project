@@ -126,10 +126,10 @@ def run_point_to_plane_icp(source, target, init_trans):
 
 # ------------------ 메인 실행 ------------------
 def main(args):
-    
-    method    = args.method
+
+    method = args.method
     optimizer = args.optimizer
-    
+
     base_dir = args.data_dir
     gt_pose_path = args.pose_path
 
@@ -148,9 +148,11 @@ def main(args):
 
     pose = np.eye(4)
     global_map = o3d.geometry.PointCloud()
+    gt_map = o3d.geometry.PointCloud()
     trajectory_est = []
 
     prev_id = valid_ids[0]
+    T0_gt = gt_dict[prev_id]
     prev_pcd = load_point_cloud(f"{base_dir}/{prev_id:010d}.bin")
     prev_pcd.transform(pose)
     global_map += prev_pcd
@@ -164,6 +166,15 @@ def main(args):
         T_gt_prev = gt_dict[prev_id]
         T_gt_curr = gt_dict[curr_id]
         T_init = np.linalg.inv(T_gt_prev) @ T_gt_curr
+
+        # ── GT 맵 누적 ──(비교 시각화용)
+        curr_pcd_gt = copy.deepcopy(curr_pcd)
+        # 기준 프레임 대비 상대 GT 변환
+        T_rel_gt = np.linalg.inv(T0_gt) @ gt_dict[curr_id]
+        curr_pcd_gt.transform(T_rel_gt)
+        curr_pcd_gt.paint_uniform_color([1.0, 0.0, 0.0])  # 붉은 색
+        gt_map += curr_pcd_gt
+        # ─────────────────
 
         # ICP 수행
         if args.multiscale:
@@ -215,7 +226,13 @@ def main(args):
     print(f"[EVAL] ATE RMSE: {ate_rmse:.4f} meters")
 
     # ▶ 화면에 한 번만 띄우고
-    o3d.visualization.draw_geometries([global_map])
+    # (추정된 맵)
+    global_map.paint_uniform_color([0.7, 0.7, 0.7])
+
+    # (GT 맵은 loop 안에서 이미 red로 칠했지만, 안전하게 다시 한 번)
+    gt_map.paint_uniform_color([1.0, 0.0, 0.0])
+
+    o3d.visualization.draw_geometries([global_map, gt_map])
 
     # ▶ 결과 저장
     out_dir = "results"
