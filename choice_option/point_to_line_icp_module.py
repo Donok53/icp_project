@@ -1,96 +1,106 @@
+# point_to_line_icp_module.py
 import numpy as np
 from scipy.spatial import KDTree
 import open3d as o3d
+from choice_option.p_to_p_custom import compute_transformation_svd  # ➊
+
 
 def skew(v):
-    return np.array([
-        [0, -v[2], v[1]],
-        [v[2], 0, -v[0]],
-        [-v[1], v[0], 0]
-    ])
+    return np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+
 
 def compute_line_directions(pcd, k=10):
     pts = np.asarray(pcd.points)
     tree = KDTree(pts)
     directions = []
-
     for i in range(len(pts)):
         _, idxs = tree.query(pts[i], k=k)
         neighbors = pts[idxs]
         cov = np.cov(neighbors.T)
         eigvals, eigvecs = np.linalg.eigh(cov)
-        v = eigvecs[:, -1]  # 주성분 (가장 큰 고유값)
-        directions.append(v)
-
+        directions.append(eigvecs[:, -1])
     return np.array(directions)
 
-def run_point_to_line_icp_custom(source_pcd, target_pcd, init_trans=np.eye(4), optimizer='least_squares', max_iter=20, tol=1e-6):
+
+def run_point_to_line_icp_custom(
+    source_pcd, target_pcd, init_trans=np.eye(4), optimizer="svd", max_iter=20, tol=1e-6
+):
     source_pts = np.asarray(source_pcd.points)
     target_pts = np.asarray(target_pcd.points)
-
-    # 라인 방향 벡터 필요
-    line_directions = compute_line_directions(target_pcd)
+    line_dirs = compute_line_directions(target_pcd)
 
     T_total = init_trans.copy()
-    source_transformed = (T_total[:3, :3] @ source_pts.T).T + T_total[:3, 3]
+    src = (T_total[:3, :3] @ source_pts.T).T + T_total[:3, 3]
     tree = KDTree(target_pts)
 
-    for i in range(max_iter):
-        dists, idxs = tree.query(source_transformed)
-        corr_tgt = target_pts[idxs]
-        corr_dirs = line_directions[idxs]
+    for _ in range(max_iter):
+        # ➋ correspondence
+        dists, idxs = tree.query(src)
+        corr_src = src  # (N,3)
+        corr_q = target_pts[idxs]  # (N,3)
+        corr_v = line_dirs[idxs]  # (N,3)
 
+        # —————— SVD closed-form 분기 ——————
+        if optimizer == "svd":
+            # 1) src를 line에 orthogonal projection
+            diffs = corr_src - corr_q  # (N,3)
+            dots = np.sum(diffs * corr_v, axis=1, keepdims=True)  # (N,1)
+            proj_q = corr_q + corr_v * dots  # (N,3)
+            # closed-form SVD 계산 (compute_transformation_svd는 4×4 행렬 하나를 반환)
+            T_delta = compute_transformation_svd(corr_src, proj_q)
+            R_delta = T_delta[:3, :3]
+            t_delta = T_delta[:3, 3]
+            src = (R_delta @ src.T).T + t_delta
+            T_total = T_delta @ T_total
+            # 4) 수렴 체크
+            if np.linalg.norm(t_delta) < tol:
+                break
+            else:
+                continue
+        # ————————————————————————————————
+
+        # 기존 Least‐Squares / Gauss‐Newton / LM 분기
         H = np.zeros((6, 6))
         g = np.zeros((6, 1))
-
-        for p, q, v in zip(source_transformed, corr_tgt, corr_dirs):
+        for p, q, v in zip(corr_src, corr_q, corr_v):
             v = v / np.linalg.norm(v)
-            r = np.cross((p - q), v).reshape(3, 1)  # 3x1 잔차
-
+            r = np.cross((p - q), v).reshape(3, 1)
             J = np.zeros((3, 6))
-            J[:, :3] = -skew(np.cross(v, p))      # 회전에 대한 도함수
-            J[:, 3:] = -skew(v)                   # 병진에 대한 도함수
-
+            J[:, :3] = -skew(np.cross(v, p))
+            J[:, 3:] = -skew(v)
             H += J.T @ J
             g += J.T @ r
 
         try:
-            if optimizer == 'lm':
-                lambda_ = 1e-3
-                dx = -np.linalg.solve(H + lambda_ * np.eye(6), g)
-            elif optimizer in ['least_squares', 'gauss_newton']:
+            if optimizer == "lm":
+                λ = 1e-3
+                dx = -np.linalg.solve(H + λ * np.eye(6), g)
+            elif optimizer in ["least_squares", "gauss_newton"]:
                 dx = -np.linalg.solve(H, g)
             else:
                 raise ValueError(f"Unsupported optimizer: {optimizer}")
         except np.linalg.LinAlgError:
-            print("[WARN] Singular matrix during optimization.")
+            print("[WARN] Singular matrix")
             break
 
         delta = dx.flatten()
-        if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
-            print("[WARN] Invalid delta (NaN/Inf)")
-            break
-
         R_delta = o3d.geometry.get_rotation_matrix_from_axis_angle(delta[:3])
         t_delta = delta[3:]
         T_delta = np.eye(4)
         T_delta[:3, :3] = R_delta
         T_delta[:3, 3] = t_delta
 
-        source_transformed = (R_delta @ source_transformed.T).T + t_delta
+        src = (R_delta @ src.T).T + t_delta
         T_total = T_delta @ T_total
 
         if np.linalg.norm(delta) < tol:
             break
 
-    # 최종 정합 품질 평가
-    final_corr_tgt = target_pts[idxs]
-    final_corr_dirs = line_directions[idxs]
-    dist_vecs = np.cross((source_transformed - final_corr_tgt), final_corr_dirs)
-    dists = np.linalg.norm(dist_vecs, axis=1)
-
+    # 평가 코드는 그대로
+    final_corr = np.cross((src - corr_q), corr_v)
+    dists = np.linalg.norm(final_corr, axis=1)
     inliers = dists < 1.0
     fitness = np.sum(inliers) / len(dists)
-    rmse = np.sqrt(np.mean(dists[inliers] ** 2)) if np.any(inliers) else float('inf')
+    rmse = np.sqrt(np.mean(dists[inliers] ** 2)) if np.any(inliers) else float("inf")
 
     return T_total, fitness, rmse

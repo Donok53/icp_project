@@ -4,6 +4,7 @@ import argparse
 import os
 from scipy.spatial import cKDTree
 import copy
+import time
 
 from scipy.spatial import KDTree
 from choice_option.p_to_p_custom import run_p2p_icp
@@ -126,10 +127,10 @@ def run_point_to_plane_icp(source, target, init_trans):
 
 # ------------------ 메인 실행 ------------------
 def main(args):
-    
-    method    = args.method
+
+    method = args.method
     optimizer = args.optimizer
-    
+
     base_dir = args.data_dir
     gt_pose_path = args.pose_path
 
@@ -156,6 +157,8 @@ def main(args):
     global_map += prev_pcd
     trajectory_est.append((prev_id, pose.copy()))
 
+    total_icp_time = 0.0
+
     for curr_id in valid_ids[1:]:
         print(f"[INFO] Aligning frame {curr_id}")
         curr_pcd = load_point_cloud(f"{base_dir}/{curr_id:010d}.bin")
@@ -165,6 +168,7 @@ def main(args):
         T_gt_curr = gt_dict[curr_id]
         T_init = np.linalg.inv(T_gt_prev) @ T_gt_curr
 
+        icp_start = time.time()
         # ICP 수행
         if args.multiscale:
             T_icp, fitness, rmse = multiscale_icp(
@@ -179,6 +183,10 @@ def main(args):
             T_icp, fitness, rmse = run_icp(
                 args.method, args.optimizer, curr_pcd, prev_pcd, T_init
             )
+
+        icp_elapsed = time.time() - icp_start
+        total_icp_time += icp_elapsed
+        print(f"[TIME] Frame {curr_id} ICP time: {icp_elapsed:.3f} sec")
         print(f"[ICP] Fitness: {fitness:.4f}, RMSE: {rmse:.4f}")
 
         # ── inlier 점만 골라서 global_map에 추가 ──
@@ -213,6 +221,7 @@ def main(args):
     print("[INFO] ATE 평가 시작...")
     ate_rmse = compute_ate_relative(trajectory_est, gt_dict)
     print(f"[EVAL] ATE RMSE: {ate_rmse:.4f} meters")
+    print(f"[TIME] Total ICP execution time: {total_icp_time:.3f} sec")
 
     # ▶ 화면에 한 번만 띄우고
     o3d.visualization.draw_geometries([global_map])
@@ -262,8 +271,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--optimizer",
         type=str,
-        default="least_squares",
-        choices=["least_squares", "gauss_newton", "lm"],
+        default="svd",
+        choices=["svd", "least_squares", "gauss_newton", "lm"],
     )
     parser.add_argument("--frame_gap", type=int, default=5)
     parser.add_argument(
