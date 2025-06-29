@@ -223,8 +223,26 @@ def main(args):
     print(f"[EVAL] ATE RMSE: {ate_rmse:.4f} meters")
     print(f"[TIME] Total ICP execution time: {total_icp_time:.3f} sec")
 
+    # ICP gt 결과 파일
+
+    # 기존 프로젝트나 GT 파일
+    gt_file = "./choice_option/gt/2013_05_28_drive_0003_sync_gt_icp_result.ply"
+    # 파일 존재 여부 체크
+    if not os.path.exists(gt_file):
+        raise FileNotFoundError(f"[ERROR] {gt_file} 파일을 찾을 수 없습니다.")
+
+    # 기존 GT 포인트 클라우드 로드
+    gt_pcd = o3d.io.read_point_cloud(gt_file)
+    gt_pcd.paint_uniform_color([1, 0, 0])  # 빨간색으로 GT 표시
+
+    # 현재 ICP global_map 색상 설정
+    icp_pcd = global_map
+    icp_pcd.paint_uniform_color([0, 0, 1])  # 파란색으로 ICP 결과 표시
+
     # ▶ 화면에 한 번만 띄우고
-    o3d.visualization.draw_geometries([global_map])
+    o3d.visualization.draw_geometries(
+        [gt_pcd, icp_pcd], window_name="ICP vs GT Real-Time Comparison"
+    )
 
     # ▶ 결과 저장
     out_dir = "results"

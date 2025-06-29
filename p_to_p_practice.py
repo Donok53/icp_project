@@ -2,16 +2,18 @@ import open3d as o3d
 import numpy as np
 from scipy.spatial import KDTree
 
+
 def load_point_cloud(file_path):
     points = np.fromfile(file_path, dtype=np.float32).reshape(-1, 4)[:, :3]
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points)
     return pcd
 
+
 def icp_point_to_point(src_pts, tgt_pts, max_iter=20, tol=1e-6):
     src = src_pts.copy()
     tgt = tgt_pts.copy()
-    prev_error = float('inf')
+    prev_error = float("inf")
 
     for _ in range(max_iter):
         tree = KDTree(tgt)
@@ -42,12 +44,13 @@ def icp_point_to_point(src_pts, tgt_pts, max_iter=20, tol=1e-6):
     T[:3, 3] = t
     return T
 
+
 def load_gt_poses_with_indices(file_path):
     gt_poses = []
     frame_ids = []
-    with open(file_path, 'r') as f:
+    with open(file_path, "r") as f:
         for line in f:
-            values = np.fromstring(line.strip(), sep=' ')
+            values = np.fromstring(line.strip(), sep=" ")
             if len(values) != 13:
                 continue
             frame_id = int(values[0])
@@ -57,6 +60,7 @@ def load_gt_poses_with_indices(file_path):
             frame_ids.append(frame_id)
             gt_poses.append(T)
     return frame_ids, gt_poses
+
 
 def compute_ate(estimated_poses, gt_poses):
     errors = []
@@ -68,16 +72,17 @@ def compute_ate(estimated_poses, gt_poses):
     ate_rmse = np.sqrt(np.mean(np.square(errors)))
     return ate_rmse, errors
 
+
 if __name__ == "__main__":
-    base_dir = "/home/byeongjae/kitti360/KITTI-360/data_3d_raw/2013_05_28_drive_0000_sync/velodyne_points/data"
-    gt_pose_path = "/home/byeongjae/kitti360/data_poses/2013_05_28_drive_0000_sync/poses.txt"
+    base_dir = "D:/kitti360/KITTI-360/data_3d_raw/2013_05_28_drive_0000_sync/velodyne_points/data"
+    gt_pose_path = "D:/kitti360/data_poses/2013_05_28_drive_0000_sync/poses.txt"
 
     # GT에서 frame id와 pose를 같이 불러옴
-    frame_ids, gt_poses = load_gt_poses_with_indices(gt_pose_path, limit = 200)
-    
+    frame_ids, gt_poses = load_gt_poses_with_indices(gt_pose_path, limit=200)
+
     frame_ids = frame_ids[:300]
     gt_poses = gt_poses[:300]
-    
+
     pose = np.eye(4)
     global_map = o3d.geometry.PointCloud()
     trajectory_est = []
