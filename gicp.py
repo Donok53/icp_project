@@ -85,19 +85,20 @@ def gicp(source, target, max_iterations):
             q = target_points[idx[0]]
             q_cov = target_covs[idx[0]]
 
-            C = p_cov + R_curr @ q_cov @ R_curr.T
+            C = R_curr @ p_cov @ R_curr.T + q_cov
             try:
                 C_inv = inv(C)
             except np.linalg.LinAlgError:
                 continue
 
             r = p_trans - q
-            J = np.zeros((3, 6))
-            J[:, :3] = -np.eye(3)
-            J[:, 3:] = -np.array([
-                [0, -p_trans[2], p_trans[1]],
-                [p_trans[2], 0, -p_trans[0]],
-                [-p_trans[1], p_trans[0], 0]
+            # 2) Jacobian 회전 파트에 R_curr 적용
+            p_body = R_curr @ p
+            J[:, :3]    = -np.eye(3)
+            J[:, 3:]    = -np.array([
+                [0, -p_body[2], p_body[1]],
+                [p_body[2], 0, -p_body[0]],
+                [-p_body[1], p_body[0], 0]
             ])
 
             A += J.T @ C_inv @ J

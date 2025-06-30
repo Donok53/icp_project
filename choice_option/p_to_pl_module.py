@@ -59,10 +59,13 @@ def run_p2pl_icp(
         H = np.zeros((6, 6))
         b = np.zeros((6, 1))
         for p, q, n in zip(corr_src, corr_target, corr_normals):
-            r = (p - q).dot(n)
+            Δ = p - q
+            # residual: projection of Δ onto normal
+            r = Δ.dot(n)
+            # Jacobian: rotation part = -Δ × n, translation part = n
             J = np.zeros((1, 6))
-            J[0, :3] = (p @ skew(n)).T
-            J[0, 3:] = n
+            J[0, :3] = - (Δ @ skew(n))      # ← 부호(–) 추가, Δ 사용
+            J[0, 3:] = n.reshape(3,)       # ← 그대로 n
 
             H += J.T @ J
             b += J.T * r
@@ -73,6 +76,11 @@ def run_p2pl_icp(
                 delta = -np.linalg.solve(H + lambda_ * np.eye(6), b)
             elif optimizer in ["least_squares", "gauss_newton"]:
                 delta = -np.linalg.solve(H, b)
+                # step size limiter
+                max_step = 0.1
+                norm_delta = np.linalg.norm(delta)
+                if norm_delta > max_step:
+                    delta *= (max_step / norm_delta)
             else:
                 raise ValueError("Unsupported optimizer: {}".format(optimizer))
         except np.linalg.LinAlgError:

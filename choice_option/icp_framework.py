@@ -5,12 +5,15 @@ import os
 from scipy.spatial import cKDTree
 import copy
 import time
+import csv
+
 
 from scipy.spatial import KDTree
 from choice_option.p_to_p_custom import run_p2p_icp
 from choice_option.p_to_pl_module import run_p2pl_icp
 from choice_option.gicp_module import run_gicp
 from choice_option.point_to_line_icp_module import run_point_to_line_icp_custom
+
 
 
 # ------------------ 공통 유틸 함수 ------------------
@@ -100,31 +103,6 @@ def run_icp(method, optimizer, source, target, init_trans):
         raise NotImplementedError(f"Unknown ICP method: {method}")
 
 
-# ------------------ ICP 방법 정의 ------------------
-def run_point_to_point_icp(source, target, init_trans):
-    reg = o3d.pipelines.registration.registration_icp(
-        source,
-        target,
-        1.5,
-        init_trans,
-        o3d.pipelines.registration.TransformationEstimationPointToPoint(),
-    )
-    return reg.transformation, reg.fitness, reg.inlier_rmse
-
-
-def run_point_to_plane_icp(source, target, init_trans):
-    source.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=1.5, max_nn=50))
-    target.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=1.5, max_nn=50))
-    reg = o3d.pipelines.registration.registration_icp(
-        source,
-        target,
-        1.5,
-        init_trans,
-        o3d.pipelines.registration.TransformationEstimationPointToPlane(),
-    )
-    return reg.transformation, reg.fitness, reg.inlier_rmse
-
-
 # ------------------ 메인 실행 ------------------
 def main(args):
 
@@ -158,6 +136,12 @@ def main(args):
     trajectory_est.append((prev_id, pose.copy()))
 
     total_icp_time = 0.0
+    
+    # 프레임별 metrics 기록용 리스트
+    metrics = []
+    
+    out_aligned = os.path.join("results", "aligned_frames")
+    os.makedirs(out_aligned, exist_ok=True)
 
     for curr_id in valid_ids[1:]:
         print(f"[INFO] Aligning frame {curr_id}")
@@ -172,56 +156,88 @@ def main(args):
         # ICP 수행
         if args.multiscale:
             T_icp, fitness, rmse = multiscale_icp(
-                args.method,
-                args.optimizer,
-                curr_pcd,
-                prev_pcd,
+                method, optimizer,
+                curr_pcd, prev_pcd,
                 T_init,
                 scales=[0.5, 0.2, 0.1],
             )
         else:
             T_icp, fitness, rmse = run_icp(
-                args.method, args.optimizer, curr_pcd, prev_pcd, T_init
+                method, optimizer,
+                curr_pcd, prev_pcd, T_init
             )
-
         icp_elapsed = time.time() - icp_start
         total_icp_time += icp_elapsed
         print(f"[TIME] Frame {curr_id} ICP time: {icp_elapsed:.3f} sec")
         print(f"[ICP] Fitness: {fitness:.4f}, RMSE: {rmse:.4f}")
 
+        # ── 여기서 per-frame alignment 결과를 PLY로 저장 ──
+        # ── GT+ICP 결과를 하나로 합쳐서 컬러 구분된 PLY 저장 ──
+        gt_aligned  = copy.deepcopy(curr_pcd)
+        gt_aligned.transform(T_init)
+        gt_aligned.paint_uniform_color([1, 0, 0])   # 빨강: GT
+
+        icp_aligned = copy.deepcopy(curr_pcd)
+        icp_aligned.transform(T_init @ T_icp)
+        icp_aligned.paint_uniform_color([0, 0, 1])  # 파랑: ICP
+
+        combined = gt_aligned + icp_aligned
+        # method, optimizer 이름을 파일명에 추가
+        combined_path = os.path.join(
+            out_aligned,
+            f"{method}_{optimizer}_combined_{prev_id:06d}_{curr_id:06d}.ply"
+        )
+        o3d.io.write_point_cloud(combined_path, combined)
+        print(f"[SAVE COMBINED] {combined_path}")
+        
+
+        metrics.append((
+        os.path.basename(combined_path),
+        fitness,
+        rmse
+    ))
+        
+        
+        # ────────────────────────────────────────────────
+
         # ── inlier 점만 골라서 global_map에 추가 ──
-        # ➊ curr_pcd 점들에 ICP 변환 적용
         src_pts = np.asarray(curr_pcd.points)
         src_trans = (T_icp[:3, :3] @ src_pts.T).T + T_icp[:3, 3]
 
-        # ➋ prev_pcd로 KDTree 매칭 → inlier_pts 선택 (고정 thr)
         dists, _ = cKDTree(np.asarray(prev_pcd.points)).query(src_trans)
         thr = np.mean(dists) + 0.5 * np.std(dists)
         inlier_pts = src_trans[dists < thr]
 
-        # ➌ inlier_pts로 PointCloud 생성 + 완전 중복 제거
         inlier_pcd = o3d.geometry.PointCloud()
         inlier_pcd.points = o3d.utility.Vector3dVector(inlier_pts)
         inlier_pcd.remove_duplicated_points()
         inlier_pcd.remove_non_finite_points()
         inlier_pcd.paint_uniform_color([0.7, 0.7, 0.7])
 
-        # ➍ global_map에 누적 + 다운샘플링/아웃라이어 제거
+        global_map += inlier_pcd
         global_map = global_map.voxel_down_sample(voxel_size=0.15)
         global_map, _ = global_map.remove_statistical_outlier(
             nb_neighbors=10, std_ratio=3.0
         )
 
-        # ➏ 궤적 업데이트 & 다음 프레임 준비
+        # 궤적 업데이트 & 다음 프레임 준비
         pose = pose @ T_icp
         trajectory_est.append((curr_id, pose.copy()))
         prev_pcd = curr_pcd
         prev_id = curr_id
+        
+    csv_path = os.path.join(out_aligned, f"{method}_{optimizer}_metrics.csv")
+    with open(csv_path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["filename","fitness","rmse"])
+        w.writerows(metrics)
+    print(f"[SAVE METRICS] {csv_path}")
 
     print("[INFO] ATE 평가 시작...")
     ate_rmse = compute_ate_relative(trajectory_est, gt_dict)
     print(f"[EVAL] ATE RMSE: {ate_rmse:.4f} meters")
     print(f"[TIME] Total ICP execution time: {total_icp_time:.3f} sec")
+
 
     # ICP gt 결과 파일
 
