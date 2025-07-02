@@ -6,7 +6,7 @@ import open3d as o3d
 from open3d.visualization import VisualizerWithKeyCallback
 
 class StepViewer:
-    def __init__(self, ply_dir, prefix="p_to_p_lm"):
+    def __init__(self, ply_dir, prefix="p_to_p_gauss_newton"):
         pattern = os.path.join(ply_dir, f"{prefix}_combined_*.ply")
         self.files = sorted(glob.glob(pattern))
         if not self.files:

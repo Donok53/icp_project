@@ -242,7 +242,7 @@ def main(args):
     # ICP gt 결과 파일
 
     # 기존 프로젝트나 GT 파일
-    gt_file = "./choice_option/gt/2013_05_28_drive_0003_sync_gt_icp_result.ply"
+    gt_file = "D:/kitti360/data_3d_semantics/train/2013_05_28_drive_0003_sync/static/0000000002_0000000282.ply"
     # 파일 존재 여부 체크
     if not os.path.exists(gt_file):
         raise FileNotFoundError(f"[ERROR] {gt_file} 파일을 찾을 수 없습니다.")
@@ -255,10 +255,7 @@ def main(args):
     icp_pcd = global_map
     icp_pcd.paint_uniform_color([0, 0, 1])  # 파란색으로 ICP 결과 표시
 
-    # ▶ 화면에 한 번만 띄우고
-    o3d.visualization.draw_geometries(
-        [gt_pcd, icp_pcd], window_name="ICP vs GT Real-Time Comparison"
-    )
+    
 
     # ▶ 결과 저장
     out_dir = "results"
