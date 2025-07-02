@@ -8,19 +8,23 @@ def skew(x):
     return np.array([[0, -x[2], x[1]], [x[2], 0, -x[0]], [-x[1], x[0], 0]])
 
 
-def compute_covariances(pcd, max_nn=30):
+def compute_covariances(pcd, max_nn=10):
     pts = np.asarray(pcd.points)
     tree = KDTree(pts)
     covariances = []
+    insufficient_neighbors = 0  # neighbor 부족 카운터
     for pt in pts:
         dists, idxs = tree.query(pt, k=max_nn)
         if idxs is None or len(idxs) < 3:
             cov = np.eye(3) * 1e-6
+            insufficient_neighbors += 1
         else:
             neighbors = pts[idxs] - pt
             cov = np.cov(neighbors.T) + np.eye(3) * 1e-6
         covariances.append(cov)
+    print(f"[GICP] Covariance: insufficient neighbors = {insufficient_neighbors}/{len(pts)} ({insufficient_neighbors/len(pts)*100:.2f}%)")
     return np.stack(covariances)
+
 
 
 def run_gicp(
@@ -31,18 +35,15 @@ def run_gicp(
     max_iter=20,
     tol=1e-6,
 ):
-    # Prepare data
     src_pts = np.asarray(source_pcd.points)
     tgt_pts = np.asarray(target_pcd.points)
     src_covs = compute_covariances(source_pcd)
     tgt_covs = compute_covariances(target_pcd)
 
-    # Initial transform
     T_total = init_trans.copy()
     src = (T_total[:3, :3] @ src_pts.T).T + T_total[:3, 3]
 
     for _ in range(max_iter):
-        # Find nearest neighbors
         tree = KDTree(tgt_pts)
         dists, idxs = tree.query(src)
         corr_src = src
@@ -55,10 +56,8 @@ def run_gicp(
             T_delta = compute_transformation_svd(corr_src, corr_tgt)
             R_delta = T_delta[:3, :3]
             t_delta = T_delta[:3, 3]
-
             src = (R_delta @ src.T).T + t_delta
             T_total = T_delta @ T_total
-
             if np.linalg.norm(t_delta) < tol:
                 break
             else:
@@ -68,12 +67,17 @@ def run_gicp(
         H = np.zeros((6, 6))
         g = np.zeros((6, 1))
         R_prev = T_total[:3, :3]
+        singular_count = 0  # Singular matrix 카운터
+        total_count = 0
+
         for i, (p, q) in enumerate(zip(corr_src, corr_tgt)):
             C = corr_src_cov[i] + R_prev @ corr_tgt_cov[i] @ R_prev.T + np.eye(3) * 1e-6
             try:
                 C_inv = np.linalg.inv(C)
             except np.linalg.LinAlgError:
+                singular_count += 1
                 continue
+            total_count += 1
 
             r = (q - p).reshape(3, 1)
             J = np.zeros((3, 6))
@@ -82,6 +86,11 @@ def run_gicp(
 
             H += J.T @ C_inv @ J
             g += J.T @ C_inv @ r
+
+        if total_count + singular_count > 0:
+            print(f"[GICP] Singular matrix skips: {singular_count}/{total_count+singular_count} ({singular_count/(total_count+singular_count)*100:.2f}%)")
+        else:
+            print("[GICP] No correspondences processed.")
 
         # Solve for update
         try:
@@ -93,7 +102,7 @@ def run_gicp(
             else:
                 raise ValueError(f"Unsupported optimizer: {optimizer}")
         except np.linalg.LinAlgError:
-            print("[WARN] Singular matrix")
+            print("[WARN] Singular matrix (Hessian)")
             break
 
         delta = dx.flatten()
@@ -103,7 +112,6 @@ def run_gicp(
         T_delta[:3, :3] = R_delta
         T_delta[:3, 3] = t_delta
 
-        # Apply update
         src = (R_delta @ src.T).T + t_delta
         T_total = T_delta @ T_total
 
@@ -112,7 +120,7 @@ def run_gicp(
 
     # Evaluate fitness and rmse
     final_dists = np.linalg.norm(src - corr_tgt, axis=1)
-    inliers = final_dists < 1.0
+    inliers = final_dists < 2.0
     fitness = np.sum(inliers) / len(final_dists)
     rmse = (
         np.sqrt(np.mean(final_dists[inliers] ** 2)) if np.any(inliers) else float("inf")

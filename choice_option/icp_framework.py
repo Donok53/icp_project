@@ -41,10 +41,10 @@ def multiscale_icp(
         tgt_ds = target.voxel_down_sample(voxel)
         # 2) normal 재계산 (필요 시)
         src_ds.estimate_normals(
-            o3d.geometry.KDTreeSearchParamHybrid(radius=voxel * 2, max_nn=30)
+            o3d.geometry.KDTreeSearchParamHybrid(radius=voxel * 2, max_nn=10)
         )
         tgt_ds.estimate_normals(
-            o3d.geometry.KDTreeSearchParamHybrid(radius=voxel * 2, max_nn=30)
+            o3d.geometry.KDTreeSearchParamHybrid(radius=voxel * 2, max_nn=10)
         )
         # 3) ICP
         T_delta, fitness, rmse = run_icp(method, optimizer, src_ds, tgt_ds, np.eye(4))

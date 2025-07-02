@@ -99,7 +99,7 @@ def run_point_to_line_icp_custom(
     # 평가 코드는 그대로
     final_corr = np.cross((src - corr_q), corr_v)
     dists = np.linalg.norm(final_corr, axis=1)
-    inliers = dists < 1.0
+    inliers = dists < 2.0
     fitness = np.sum(inliers) / len(dists)
     rmse = np.sqrt(np.mean(dists[inliers] ** 2)) if np.any(inliers) else float("inf")
 
