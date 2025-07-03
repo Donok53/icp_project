@@ -8,7 +8,7 @@ from scipy.spatial.transform import Rotation as R
 # ──────────────────────── 설정 ────────────────────────
 frame_gap = 5  # 프레임 간격
 max_iterations = 10
-fitness_threshold = 0.001
+fitness_threshold = 0.2
 
 # ──────────────────────── 유틸 함수 ────────────────────────
 def load_bin_as_pcd(path):
@@ -94,6 +94,7 @@ def gicp(source, target, max_iterations):
             r = p_trans - q
             # 2) Jacobian 회전 파트에 R_curr 적용
             p_body = R_curr @ p
+            J = np.zeros((3, 6))
             J[:, :3]    = -np.eye(3)
             J[:, 3:]    = -np.array([
                 [0, -p_body[2], p_body[1]],
@@ -186,6 +187,6 @@ def run_gicp_pipeline(bin_dir, gt_pose_path):
 
 # ──────────────────────── 실행 예시 ────────────────────────
 if __name__ == "__main__":
-    bin_dir = "D:/kitti360/KITTI-360/data_3d_raw/2013_05_28_drive_0004_sync/velodyne_points/data"
-    gt_pose_path = "D:/kitti360/data_poses/2013_05_28_drive_0004_sync/poses.txt"
+    bin_dir = "D:/kitti360/KITTI-360/data_3d_raw/2013_05_28_drive_0003_sync/velodyne_points/data"
+    gt_pose_path = "D:/kitti360/data_poses/2013_05_28_drive_0003_sync/poses.txt"
     run_gicp_pipeline(bin_dir, gt_pose_path)
