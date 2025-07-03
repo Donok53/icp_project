@@ -117,11 +117,17 @@ def run_point_to_line_icp_custom(
     # --- 최적 이터레이션으로 롤백 ---
     T_total = best_T.copy()
 
-    # 평가 코드는 그대로
+    # 1) src 재계산 (best_T 기준)
+    src = (T_total[:3, :3] @ source_pts.T).T + T_total[:3, 3]
+    # 2) fresh correspondence
+    dists, idxs = tree.query(src)
+    corr_q = target_pts[idxs]
+    corr_v = line_dirs[idxs]   # ← target_normals가 아니라 line_dirs 사용
+    # 3) 최종 inlier/rmse 평가
     final_corr = np.cross((src - corr_q), corr_v)
-    dists = np.linalg.norm(final_corr, axis=1)
-    inliers = dists < 2.0
-    fitness = np.sum(inliers) / len(dists)
-    rmse = best_rmse
+    d = np.linalg.norm(final_corr, axis=1)
+    inliers = d < 2.0
+    fitness = np.sum(inliers) / len(d)
+    rmse = np.sqrt(np.mean(d[inliers]**2)) if np.any(inliers) else float('inf')
 
     return T_total, fitness, rmse

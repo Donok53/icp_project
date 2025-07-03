@@ -122,14 +122,14 @@ def run_gicp(
     # --- 최적 이터레이션으로 롤백 ---
     T_total = best_T.copy()
 
-    # 최종 fitness, rmse (inliers threshold unchanged)
+    # --- 최적 이터레이션으로 롤백 후 fresh 평가 ---
     final_src = (T_total[:3, :3] @ src_pts.T).T + T_total[:3, 3]
     tree = KDTree(tgt_pts)
-    _, idxs = tree.query(final_src)
+    dists, idxs = tree.query(final_src)
     final_tgt = tgt_pts[idxs]
-    final_d = np.linalg.norm(final_src - final_tgt, axis=1)
-    inliers = final_d < 2.0
-    fitness = np.sum(inliers) / len(final_d)
-    rmse = best_rmse
+    d = np.linalg.norm(final_src - final_tgt, axis=1)
+    inliers = d < 2.0
+    fitness = np.sum(inliers) / len(d)
+    rmse = np.sqrt(np.mean(d[inliers]**2)) if np.any(inliers) else float('inf')
 
     return T_total, fitness, rmse

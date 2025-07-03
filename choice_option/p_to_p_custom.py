@@ -59,7 +59,7 @@ def run_p2p_icp(source_pcd, target_pcd,
     src_trans = (T_total[:3, :3] @ src_pts.T).T + T_total[:3, 3]
 
     if optimizer == 'svd':
-        for i in range(max_iter):
+        for _ in range(max_iter):
             tree = KDTree(tgt_pts)
             dists, idxs = tree.query(src_trans)
             tgt_corr = tgt_pts[idxs]
@@ -72,20 +72,19 @@ def run_p2p_icp(source_pcd, target_pcd,
             T_total = T_delta @ T_total
 
             # RMSE and best update
-            final_d = np.linalg.norm(src_trans - tgt_corr, axis=1)
-            mask = final_d < 2.0
-            rmse_i = np.sqrt(np.mean(final_d[mask]**2)) if np.any(mask) else float('inf')
+            d = np.linalg.norm(src_trans - tgt_corr, axis=1)
+            mask = d < 2.0
+            rmse_i = np.sqrt(np.mean(d[mask]**2)) if np.any(mask) else float('inf')
             if rmse_i < best_rmse:
                 best_rmse = rmse_i
                 best_T = T_total.copy()
 
             if np.linalg.norm(t_delta) < tol:
                 break
-
     else:
         # iterative optimizer
         x = np.zeros(6)
-        for i in range(max_iter):
+        for _ in range(max_iter):
             # extract R, t
             omega = x[:3]
             theta = np.linalg.norm(omega)
@@ -101,9 +100,9 @@ def run_p2p_icp(source_pcd, target_pcd,
             src_trans = (R_curr @ src_pts.T).T + t_curr
             tree = KDTree(tgt_pts)
             dists, idxs = tree.query(src_trans)
-            corr = dists < np.inf
-            P_corr = src_trans[corr]
-            Q_corr = tgt_pts[idxs[corr]]
+            mask_corr = dists < np.inf
+            P_corr = src_trans[mask_corr]
+            Q_corr = tgt_pts[idxs[mask_corr]]
 
             # Hessian & gradient
             H = np.zeros((6,6)); g = np.zeros(6)
@@ -140,23 +139,24 @@ def run_p2p_icp(source_pcd, target_pcd,
 
             # rmse_i compute
             src_iter = (T_total[:3,:3] @ src_pts.T).T + T_total[:3,3]
-            tree2 = KDTree(tgt_pts)
-            d2, idx2 = tree2.query(src_iter)
+            d2, idx2 = KDTree(tgt_pts).query(src_iter)
             mask2 = d2 < 2.0
             rmse_i = np.sqrt(np.mean(d2[mask2]**2)) if np.any(mask2) else float('inf')
             if rmse_i < best_rmse:
                 best_rmse = rmse_i
                 best_T = T_total.copy()
 
-    # rollback to best
+    # --- rollback to best iteration ---
     T_total = best_T.copy()
 
-    # final fitness & rmse
-    final_src = (T_total[:3,:3] @ src_pts.T).T + T_total[:3,3]
+    # final src recompute
+    final_src = (T_total[:3, :3] @ src_pts.T).T + T_total[:3, 3]
+    # fresh correspondence and evaluation
     treef = KDTree(tgt_pts)
     d_final, _ = treef.query(final_src)
     mask_f = d_final < 2.0
     fitness = np.sum(mask_f) / len(d_final)
-    rmse = best_rmse
+    rmse = np.sqrt(np.mean(d_final[mask_f]**2)) if np.any(mask_f) else float('inf')
 
     return T_total, fitness, rmse
+

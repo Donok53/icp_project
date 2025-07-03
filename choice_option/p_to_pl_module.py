@@ -126,10 +126,17 @@ def run_p2pl_icp(
     T_total = best_T.copy()
 
     # Evaluation code unchanged
-    final_corr = np.cross((src - corr_target), corr_normals)
-    dists = np.linalg.norm(final_corr, axis=1)
-    inliers = dists < 2.0
-    fitness = np.sum(inliers) / len(dists)
-    rmse = best_rmse
+    # 1) src 재계산
+    src = (T_total[:3, :3] @ source_pts.T).T + T_total[:3, 3]
+    # 2) fresh correspondence
+    dists, idxs = tree.query(src)
+    corr_q = target_pts[idxs]
+    corr_v = target_normals[idxs]
+    # 3) 최종 inlier/rmse 평가
+    final_corr = np.cross((src - corr_q), corr_v)
+    d = np.linalg.norm(final_corr, axis=1)
+    inliers = d < 2.0
+    fitness = np.sum(inliers) / len(d)
+    rmse = np.sqrt(np.mean(d[inliers]**2)) if np.any(inliers) else float('inf')
 
     return T_total, fitness, rmse
