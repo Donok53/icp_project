@@ -24,7 +24,6 @@ def compute_covariances(pcd, max_nn=10):
             neighbors = pts[idxs] - pt
             cov = np.cov(neighbors.T) + np.eye(3) * 1e-6
         covariances.append(cov)
-    print(f"[GICP] Covariance: insufficient neighbors = {insufficient_neighbors}/{len(pts)} ({insufficient_neighbors/len(pts)*100:.2f}%)")
     return np.stack(covariances)
 
 
