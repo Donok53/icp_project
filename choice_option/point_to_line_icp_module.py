@@ -1,4 +1,3 @@
-# point_to_line_icp_module.py
 import numpy as np
 from scipy.spatial import KDTree
 import open3d as o3d
@@ -23,36 +22,48 @@ def compute_line_directions(pcd, k=10):
 
 
 def run_point_to_line_icp_custom(
-    source_pcd, target_pcd, init_trans=np.eye(4), optimizer="svd", max_iter=20, tol=1e-6
+    source_pcd, target_pcd, init_trans=np.eye(4),
+    optimizer="svd", max_iter=20, tol=1e-6
 ):
     source_pts = np.asarray(source_pcd.points)
     target_pts = np.asarray(target_pcd.points)
     line_dirs = compute_line_directions(target_pcd)
 
     T_total = init_trans.copy()
+    best_T = T_total.copy()
+    best_rmse = float('inf')
+
     src = (T_total[:3, :3] @ source_pts.T).T + T_total[:3, 3]
     tree = KDTree(target_pts)
 
     for _ in range(max_iter):
         # ➋ correspondence
         dists, idxs = tree.query(src)
-        corr_src = src  # (N,3)
-        corr_q = target_pts[idxs]  # (N,3)
-        corr_v = line_dirs[idxs]  # (N,3)
+        corr_src = src              # (N,3)
+        corr_q = target_pts[idxs]   # (N,3)
+        corr_v = line_dirs[idxs]    # (N,3)
 
         # —————— SVD closed-form 분기 ——————
         if optimizer == "svd":
             # 1) src를 line에 orthogonal projection
-            diffs = corr_src - corr_q  # (N,3)
+            diffs = corr_src - corr_q                # (N,3)
             dots = np.sum(diffs * corr_v, axis=1, keepdims=True)  # (N,1)
-            proj_q = corr_q + corr_v * dots  # (N,3)
-            # closed-form SVD 계산 (compute_transformation_svd는 4×4 행렬 하나를 반환)
+            proj_q = corr_q + corr_v * dots          # (N,3)
+            # closed-form SVD 계산
             T_delta = compute_transformation_svd(corr_src, proj_q)
             R_delta = T_delta[:3, :3]
             t_delta = T_delta[:3, 3]
             src = (R_delta @ src.T).T + t_delta
             T_total = T_delta @ T_total
-            # 4) 수렴 체크
+            # RMSE 평가 및 최적값 갱신
+            final_corr = np.cross((src - corr_q), corr_v)
+            d = np.linalg.norm(final_corr, axis=1)
+            inl = d < 2.0
+            rmse_i = np.sqrt(np.mean(d[inl]**2)) if np.any(inl) else float('inf')
+            if rmse_i < best_rmse:
+                best_rmse = rmse_i
+                best_T = T_total.copy()
+            # 수렴 체크
             if np.linalg.norm(t_delta) < tol:
                 break
             else:
@@ -75,10 +86,8 @@ def run_point_to_line_icp_custom(
             if optimizer == "lm":
                 λ = 1e-3
                 dx = -np.linalg.solve(H + λ * np.eye(6), g)
-            elif optimizer in ["least_squares", "gauss_newton"]:
-                dx = -np.linalg.solve(H, g)
             else:
-                raise ValueError(f"Unsupported optimizer: {optimizer}")
+                dx = -np.linalg.solve(H, g)
         except np.linalg.LinAlgError:
             print("[WARN] Singular matrix")
             break
@@ -93,14 +102,26 @@ def run_point_to_line_icp_custom(
         src = (R_delta @ src.T).T + t_delta
         T_total = T_delta @ T_total
 
+        # RMSE 평가 및 최적값 갱신
+        final_corr = np.cross((src - corr_q), corr_v)
+        d = np.linalg.norm(final_corr, axis=1)
+        inl = d < 2.0
+        rmse_i = np.sqrt(np.mean(d[inl]**2)) if np.any(inl) else float('inf')
+        if rmse_i < best_rmse:
+            best_rmse = rmse_i
+            best_T = T_total.copy()
+
         if np.linalg.norm(delta) < tol:
             break
+
+    # --- 최적 이터레이션으로 롤백 ---
+    T_total = best_T.copy()
 
     # 평가 코드는 그대로
     final_corr = np.cross((src - corr_q), corr_v)
     dists = np.linalg.norm(final_corr, axis=1)
     inliers = dists < 2.0
     fitness = np.sum(inliers) / len(dists)
-    rmse = np.sqrt(np.mean(dists[inliers] ** 2)) if np.any(inliers) else float("inf")
+    rmse = best_rmse
 
     return T_total, fitness, rmse

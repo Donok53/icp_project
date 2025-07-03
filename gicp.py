@@ -7,7 +7,7 @@ from scipy.spatial.transform import Rotation as R
 
 # ──────────────────────── 설정 ────────────────────────
 frame_gap = 5  # 프레임 간격
-max_iterations = 10
+max_iterations = 20
 fitness_threshold = 0.2
 
 # ──────────────────────── 유틸 함수 ────────────────────────
@@ -67,6 +67,10 @@ def gicp(source, target, max_iterations):
 
     R_curr = np.eye(3)
     t_curr = np.zeros(3)
+    
+    best_rmse = float('inf')
+    best_R   = R_curr.copy()
+    best_t   = t_curr.copy()
 
     for _ in range(max_iterations):
         A = np.zeros((6, 6))
@@ -119,6 +123,24 @@ def gicp(source, target, max_iterations):
 
         R_curr = R_update @ R_curr
         t_curr = R_update @ t_curr + delta_t
+        
+        # --- evaluate at this iteration ---
+        src_pts = (R_curr @ source_points.T).T + t_curr
+        # 전체 correspondence 인덱스 뽑기
+        idxs = []
+        for p in src_pts:
+            _, idx, _ = source_tree.search_knn_vector_3d(p, 1)
+            idxs.append(idx[0])
+        idxs = np.array(idxs)
+        dists = np.linalg.norm(src_pts - target_points[idxs], axis=1)
+        rmse_i = np.sqrt(np.mean(dists**2))
+        if rmse_i < best_rmse:
+            best_rmse = rmse_i
+            best_R    = R_curr.copy()
+            best_t    = t_curr.copy()
+
+    # 최적 이터레이션으로 롤백
+    R_curr, t_curr = best_R, best_t
 
     # Fitness 계산 (inlier 비율)
     inlier_count = 0
@@ -126,7 +148,7 @@ def gicp(source, target, max_iterations):
     for p in src_pts:
         _, idx, _ = source_tree.search_knn_vector_3d(p, 1)
         q = target_points[idx[0]]
-        if np.linalg.norm(p - q) < 1.5:
+        if np.linalg.norm(p - q) < 2.0:
             inlier_count += 1
 
     fitness = inlier_count / len(source_points)
@@ -187,6 +209,6 @@ def run_gicp_pipeline(bin_dir, gt_pose_path):
 
 # ──────────────────────── 실행 예시 ────────────────────────
 if __name__ == "__main__":
-    bin_dir = "D:/kitti360/KITTI-360/data_3d_raw/2013_05_28_drive_0003_sync/velodyne_points/data"
-    gt_pose_path = "D:/kitti360/data_poses/2013_05_28_drive_0003_sync/poses.txt"
+    bin_dir = "D:/kitti360/KITTI-360/data_3d_raw/2013_05_28_drive_0000_sync/velodyne_points/data"
+    gt_pose_path = "D:/kitti360/data_poses/2013_05_28_drive_0000_sync/poses.txt"
     run_gicp_pipeline(bin_dir, gt_pose_path)
